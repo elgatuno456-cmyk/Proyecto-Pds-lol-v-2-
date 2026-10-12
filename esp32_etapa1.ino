@@ -1,9 +1,3 @@
-/*
-  PDS - Etapa 1: ESP32-S3 + INMP441 + MAX98357A + ADS1115.
-  Arduino-ESP32 3.x. Leer ../LEEME.md antes de conectar el kit.
-  Ejemplos provisionales: Fs=16000 Hz, eco=250 ms, alpha=0.5, g=0.5.
-  y[n] = g * (x[n] + alpha*x[n-D]). El buffer guarda ENTRADA.
-*/
 #ifndef MODO_SIN_HARDWARE
 #define MODO_SIN_HARDWARE 1  // Cambiar a 0 para usar microfono y parlante.
 #endif
@@ -22,20 +16,18 @@
 #include "esp_err.h"
 #endif
 
-constexpr size_t BLOCK_FRAMES = 128;  // 8 ms de audio por bloque a 16 kHz.
+constexpr size_t BLOCK_FRAMES = 128;  
 constexpr float MAX_OUTPUT_GAIN = 0.5f;
 constexpr float MAX_DELAY_MS = 1000.0f * dsp::kMaxDelaySamples / dsp::kSampleRate;
-constexpr float MIC_INPUT_GAIN = 1.0f; // Empezar asi; ajustar tras medir nivel.
-
-// Pines PROPUESTOS. Confirmar que esten libres en la placa y en el montaje.
+constexpr float MIC_INPUT_GAIN = 1.0f; 
 constexpr int PIN_BCLK = 4;
 constexpr int PIN_WS = 5;
 constexpr int PIN_MIC_SD = 6;
 constexpr int PIN_AMP_DIN = 7;
 constexpr int PIN_SDA = 8;
 constexpr int PIN_SCL = 9;
-constexpr uint8_t ADS_ADDRESS = 0x48;  // ADDR conectado a GND.
-constexpr float POT_SUPPLY_V = 3.3f;  // Calibrar con la tension real del kit.
+constexpr uint8_t ADS_ADDRESS = 0x48;  
+constexpr float POT_SUPPLY_V = 3.3f;  
 
 struct Controls {
   dsp::Mode mode = dsp::Mode::Loopback;
@@ -45,8 +37,8 @@ struct Controls {
   bool reset = false;
 };
 Controls controls;
-dsp::Echo effect;                     // Global: buffer de 32 kB fuera del stack.
-bool potEnabled = false;              // Se activa con "p 1" tras probar audio.
+dsp::Echo effect;                     
+bool potEnabled = false;             
 char commandBuffer[48];
 size_t commandLength = 0;
 bool commandOverflow = false;
@@ -55,7 +47,7 @@ bool commandOverflow = false;
 portMUX_TYPE controlMux = portMUX_INITIALIZER_UNLOCKED;
 i2s_chan_handle_t txChannel = nullptr;
 i2s_chan_handle_t rxChannel = nullptr;
-int32_t rxBuffer[2 * BLOCK_FRAMES];    // Intercalado: L0,R0,L1,R1,...
+int32_t rxBuffer[2 * BLOCK_FRAMES];    
 int32_t txBuffer[2 * BLOCK_FRAMES];
 bool adsAvailable = false;
 struct Telemetry {
@@ -64,12 +56,12 @@ struct Telemetry {
   uint32_t clips = 0;
   uint32_t ioErrors = 0;
   uint32_t blocks = 0;
-  uint32_t maxDspUs = 0;              // DSP por bloque, no latencia total.
+  uint32_t maxDspUs = 0;             
 };
 Telemetry telemetry;
 #endif
 
-// Prototipos explicitos: Arduino debe conocer Controls al preprocesar el sketch.
+
 Controls readControls(bool consumeReset = false);
 void writeControls(const Controls &value);
 void configureEffect(const Controls &c);
@@ -80,7 +72,7 @@ Controls readControls(bool consumeReset) {
 #endif
   Controls copy = controls;
   if (consumeReset) controls.reset = false;
-  else copy.reset = false;             // La UI no debe reenviar eventos viejos.
+  else copy.reset = false;             
 #if !MODO_SIN_HARDWARE
   portEXIT_CRITICAL(&controlMux);
 #endif
@@ -91,7 +83,7 @@ void writeControls(const Controls &value) {
 #if !MODO_SIN_HARDWARE
   portENTER_CRITICAL(&controlMux);
 #endif
-  // Conservar una solicitud de reset aun si llega otra actualizacion.
+ 
   const bool pendingReset = controls.reset;
   controls = value;
   controls.reset = pendingReset || value.reset;
@@ -139,7 +131,7 @@ float testSignal(size_t n, int which) {
 }
 
 void runSyntheticTests() {
-  // El eco se usa aun si el modo de audio seleccionado es loopback.
+  
   Controls c = readControls();
   c.mode = dsp::Mode::Echo;
   c.reset = true;
@@ -151,9 +143,9 @@ void runSyntheticTests() {
                            (n == c.delaySamples ? c.gain*c.wet : 0.0f);
     if (fabsf(actual - expected) > 1e-6f) ++wrongImpulse;
   }
-  // Reiniciar antes de cada experimento independiente es esencial.
+  
   static float sumOfOutputs[1024];
-  effect.setDelaySamples(37);          // Retardo corto para esta prueba.
+  effect.setDelaySamples(37);         
   effect.reset();
   for (size_t n = 0; n < 1024; ++n)
     sumOfOutputs[n] = effect.process(testSignal(n, 1));
@@ -183,7 +175,7 @@ void runSyntheticTests() {
   Serial.printf("Homogeneidad error max: %.9g (%s)\n", scaleError,
                 scaleError < 1e-6f ? "PASS" : "FAIL");
   c.reset = true;
-  configureEffect(c);                 // Restaurar retardo original.
+  configureEffect(c);                
 }
 #else
 bool adsWriteRegister(uint8_t reg, uint16_t value) {
@@ -216,7 +208,7 @@ void updatePot() {
     Serial.println("ADS1115 dejo de responder; se mantiene la ultima ganancia.");
     return;
   }
-  // PGA +/-4.096 V: 1 bit = 125 uV. Pot conectado entre 3V3 y GND.
+  
   const float voltage = fmaxf(0.0f, float(raw) * 0.000125f);
   const float fraction = fminf(1.0f, voltage / POT_SUPPLY_V);
   Controls c = readControls();
@@ -225,7 +217,7 @@ void updatePot() {
 }
 
 int32_t toPcm32(float sample, uint32_t &clipCount) {
-  // Evitar convertir +2^31 a int32_t. La saturacion rompe linealidad.
+  
   if (sample > 0.99999988f) { ++clipCount; return INT32_MAX; }
   if (sample < -1.0f) { ++clipCount; return INT32_MIN; }
   return int32_t(double(sample) * 2147483648.0);
@@ -242,16 +234,14 @@ void audioTask(void *) {
       portENTER_CRITICAL(&controlMux);
       telemetry = local;
       portEXIT_CRITICAL(&controlMux);
-      vTaskDelay(1);                    // Ceder CPU si hay errores repetidos.
-      continue;                       // No procesar un bloque incompleto.
+      vTaskDelay(1);                    
+      continue;                      
     }
     Controls c = readControls(true);
     configureEffect(c);
     float peakIn = 0, peakOut = 0;
     uint32_t startUs = micros();
     for (size_t i = 0; i < BLOCK_FRAMES; ++i) {
-      // L/R del INMP441 a GND: tomar slot izquierdo.
-      // Sus 24 bits utiles ocupan la parte alta de la palabra de 32 bits.
       const float x = float(rxBuffer[2*i]) * (1.0f / 2147483648.0f)
                     * MIC_INPUT_GAIN;
       const float y = effect.process(x);
@@ -259,7 +249,7 @@ void audioTask(void *) {
       peakOut = fmaxf(peakOut, fabsf(y));
       const int32_t pcm = toPcm32(y, local.clips);
       txBuffer[2*i] = pcm;
-      txBuffer[2*i+1] = pcm;            // Igual salida en L y R para MAX98357A.
+      txBuffer[2*i+1] = pcm;           
     }
     local.maxDspUs = max(local.maxDspUs, uint32_t(micros() - startUs));
     size_t bytesWritten = 0;
@@ -281,7 +271,7 @@ void startAudio() {
       I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
   channelConfig.dma_desc_num = 6;
   channelConfig.dma_frame_num = BLOCK_FRAMES;
-  channelConfig.auto_clear = true;     // Silencio si TX queda sin datos.
+  channelConfig.auto_clear = true;     
   ESP_ERROR_CHECK(i2s_new_channel(&channelConfig, &txChannel, &rxChannel));
 
   i2s_std_config_t config = {};
@@ -295,7 +285,7 @@ void startAudio() {
   config.gpio_cfg.dout = gpio_num_t(PIN_AMP_DIN);
   ESP_ERROR_CHECK(i2s_channel_init_std_mode(txChannel, &config));
   ESP_ERROR_CHECK(i2s_channel_init_std_mode(rxChannel, &config));
-  // TX empieza con silencio. Estos son datos DMA, no eco.
+  
   size_t loaded = 0;
   ESP_ERROR_CHECK(i2s_channel_preload_data(
       txChannel, txBuffer, sizeof(txBuffer), &loaded));
@@ -357,7 +347,7 @@ void handleCommand(const char *line) {
 }
 
 void pollSerial() {
-  // Evitar readStringUntil(): esperar la linea completa bloquearia controles.
+  
   while (Serial.available()) {
     char ch = char(Serial.read());
     if (ch == '\r') continue;
@@ -375,7 +365,7 @@ void pollSerial() {
 
 void setup() {
   Serial.begin(115200);
-  delay(1000);                        // Solo arranque, no fija Fs.
+  delay(1000);                       
   Serial.println("PDS etapa 1 - ESP32-S3 - parametros provisionales.");
   printHelp();
 #if MODO_SIN_HARDWARE
@@ -386,7 +376,7 @@ void setup() {
   Wire.begin(PIN_SDA, PIN_SCL);
   Wire.setClock(100000);
   Wire.setTimeOut(10);
-  // 0xC283: AIN0-GND, PGA +/-4.096 V, continuo, 128 SPS, comparador apagado.
+  
   adsAvailable = adsWriteRegister(0x01, 0xC283);
   Serial.println(adsAvailable ? "ADS1115 configurado. Control pot aun inactivo."
                               : "ADS1115 no encontrado. Se usa ganancia manual.");
@@ -399,7 +389,7 @@ void setup() {
 void loop() {
   pollSerial();
 #if !MODO_SIN_HARDWARE
-  updatePot();                         // Separado de la tarea de audio.
+  updatePot();                         
   static uint32_t lastReportMs = 0;
   if (Serial && millis() - lastReportMs >= 1000) {
     lastReportMs = millis();
@@ -413,5 +403,5 @@ void loop() {
       (unsigned long)t.maxDspUs, (unsigned long)t.blocks);
   }
 #endif
-  delay(1);                           // Ceder CPU; el reloj I2S fija Fs.
+  delay(1);                           
 }
